@@ -9,6 +9,7 @@ from core.models import PermissionLevel
 DISCORD_CHECK_URL = "https://api.parcelroblox.com/api/user/check/{}?option=discord"
 SESSION_URL = "https://hub.parcelroblox.com/getSession"
 ROBLOX_AVATAR_URL = "https://thumbnails.roblox.com/v1/users/avatar-headshot"
+ROBLOX_USER_INFO_URL = "https://users.roblox.com/v1/users/{}"
 ROBLOX_PROFILE_URL = "https://www.roblox.com/users/{}/profile"
 CACHE_TTL = timedelta(hours=6)
 FIELD_CHAR_LIMIT = 1000
@@ -60,15 +61,27 @@ class ParcelWhitelist(commands.Cog):
         data = body.get("data") or []
         return data[0]["imageUrl"] if data else None
 
-    async def get_profile_data(self, roblox_id: str) -> dict | None:
-        """Returns {"owned": [...], "username": str|None}, using cache when possible."""
+    async def get_roblox_username(self, roblox_id: str) -> str | None:
+        """Fetch the actual @username (not the display name) straight from Roblox."""
+        url = ROBLOX_USER_INFO_URL.format(roblox_id)
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status != 200:
+                    return None
+                body = await resp.json()
+        except aiohttp.ClientError:
+            return None
+        return body.get("name")
+
+    async def get_profile_data(self, roblox_id: str) -> list[str] | None:
+        """Returns the owned-products list, using cache when possible."""
         cached = await self.db.find_one({"_id": roblox_id})
         if cached and datetime.utcnow() - cached["fetched_at"] < CACHE_TTL:
-            return {"owned": cached["owned"], "username": cached.get("username")}
+            return cached["owned"]
 
         hub_auth = await self.get_hub_auth()
         if not hub_auth:
-            return {"owned": cached["owned"], "username": cached.get("username")} if cached else None
+            return cached["owned"] if cached else None
 
         headers = {"Authorization": hub_auth}
         params = {"robloxPlayerId": roblox_id}
@@ -76,41 +89,41 @@ class ParcelWhitelist(commands.Cog):
         try:
             async with self.session.get(SESSION_URL, params=params, headers=headers) as resp:
                 if resp.status != 200:
-                    return {"owned": cached["owned"], "username": cached.get("username")} if cached else None
+                    return cached["owned"] if cached else None
                 body = await resp.json()
         except aiohttp.ClientError:
-            return {"owned": cached["owned"], "username": cached.get("username")} if cached else None
+            return cached["owned"] if cached else None
 
         if body.get("status") != "200":
-            return {"owned": cached["owned"], "username": cached.get("username")} if cached else None
+            return cached["owned"] if cached else None
 
-        data = body["data"]
-        products = data["productsData"]["allProducts"]
+        products = body["data"]["productsData"]["allProducts"]
         owned = [p["name"] for p in products if p.get("playerData", {}).get("ownsProduct")]
-        username = data.get("userData", {}).get("connectedUsername")
 
         await self.db.find_one_and_update(
             {"_id": roblox_id},
-            {"$set": {"owned": owned, "username": username, "fetched_at": datetime.utcnow()}},
+            {"$set": {"owned": owned, "fetched_at": datetime.utcnow()}},
             upsert=True,
         )
-        return {"owned": owned, "username": username}
+        return owned
 
     @staticmethod
     def _chunk_products(names: list[str], limit: int = FIELD_CHAR_LIMIT) -> list[str]:
-        """Group product names into strings that each fit under Discord's field value limit."""
-        chunks = []
-        current = ""
-        for name in names:
-            line = f"• {name}\n"
-            if len(current) + len(line) > limit:
-                chunks.append(current)
-                current = line
-            else:
-                current += line
-        if current:
-            chunks.append(current)
-        return chunks
+        """Split product names into evenly-sized groups that each fit under Discord's
+        field value limit. Splits by count rather than greedily filling each chunk,
+        so a long list doesn't end up as one packed field plus a near-empty leftover."""
+        if not names:
+            return []
+
+        lines = [f"• {name}\n" for name in names]
+        total_len = sum(len(line) for line in lines)
+        chunk_count = max(1, -(-total_len // limit))  # ceiling division
+        per_chunk = max(1, -(-len(lines) // chunk_count))  # ceiling division
+
+        return [
+            "".join(lines[i:i + per_chunk])
+            for i in range(0, len(lines), per_chunk)
+        ]
 
     async def build_profile_embed(self, member: discord.abc.User) -> discord.Embed:
         roblox_id = await self.discord_to_roblox(member.id)
@@ -120,9 +133,8 @@ class ParcelWhitelist(commands.Cog):
             embed.description = "No verified Roblox account linked on Parcel for this user."
             return embed
 
-        profile = await self.get_profile_data(roblox_id)
-        username = profile["username"] if profile else None
-        owned = profile["owned"] if profile else None
+        username = await self.get_roblox_username(roblox_id)
+        owned = await self.get_profile_data(roblox_id)
         profile_url = ROBLOX_PROFILE_URL.format(roblox_id)
 
         embed.add_field(name="Username", value=username or "Unknown", inline=True)
@@ -178,7 +190,9 @@ class ParcelWhitelist(commands.Cog):
         if not thread:
             return await ctx.send("This command can only be used inside a ticket thread.")
 
-        embed = await self.build_profile_embed(thread.recipient)
+        async with ctx.typing():
+            embed = await self.build_profile_embed(thread.recipient)
+
         await ctx.send(embed=embed)
 
 
