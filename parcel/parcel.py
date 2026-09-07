@@ -1,4 +1,5 @@
 import uuid
+import types
 import aiohttp
 import discord
 from discord.ext import commands
@@ -285,6 +286,23 @@ class ParcelWhitelist(commands.Cog):
         view.add_item(container)
         return view
 
+    @staticmethod
+    def _fake_reply_message(author: discord.abc.User, channel: discord.TextChannel) -> types.SimpleNamespace:
+        """A minimal stand-in for discord.Message so Thread.reply() can be used from a
+        button click, which has no real invoking message. Built from what Modmail's
+        reply/send internals currently read off a message — this is not a stable
+        plugin API and could need updating if Modmail changes what it reads."""
+        return types.SimpleNamespace(
+            id=0,
+            content="Transfer request update",
+            attachments=[],
+            embeds=[],
+            stickers=[],
+            author=author,
+            created_at=discord.utils.utcnow(),
+            channel=channel,
+        )
+
     # ----------------------------------------------------------------- events
 
     @commands.Cog.listener()
@@ -312,6 +330,7 @@ class ParcelWhitelist(commands.Cog):
         await interaction.response.defer()
 
         ticket_channel = self.bot.get_channel(doc["ticket_channel_id"])
+        thread = await self.bot.threads.find(channel=ticket_channel) if ticket_channel else None
         product_names = ", ".join(p["name"] for p in doc["products"])
 
         if action == "approve":
@@ -344,13 +363,17 @@ class ParcelWhitelist(commands.Cog):
             doc["status"] = "approved"
             doc["failed_products"] = failed
 
-            if ticket_channel:
-                await ticket_channel.send(
-                    "✅ **Transfer Request Approved**\n"
-                    "> **Good news — it's been approved and processed.**\n"
-                    f"> **Products transferred:** {product_names}\n"
-                    "> \n"
-                    "> If you have any questions about this, feel free to ask your support agent in this ticket."
+            if thread:
+                fake_msg = self._fake_reply_message(interaction.user, ticket_channel)
+                await thread.reply(
+                    fake_msg,
+                    content=(
+                        "✅ **Transfer Request Approved**\n"
+                        "> **Good news — it's been approved and processed.**\n"
+                        f"> **Products transferred:** {product_names}\n"
+                        "> \n"
+                        "> If you have any questions about this, feel free to ask your support agent in this ticket."
+                    ),
                 )
 
             note = f" ({len(failed)} product(s) failed — check the request card)" if failed else ""
@@ -360,13 +383,17 @@ class ParcelWhitelist(commands.Cog):
             await self.db.find_one_and_update({"_id": doc["_id"]}, {"$set": {"status": "declined"}})
             doc["status"] = "declined"
 
-            if ticket_channel:
-                await ticket_channel.send(
-                    "❌ **Transfer Request Declined**\n"
-                    "> **Unfortunately, this request wasn't approved.**\n"
-                    f"> **Products requested:** {product_names}\n"
-                    "> \n"
-                    "> If you'd like to know more, feel free to ask your support agent in this ticket."
+            if thread:
+                fake_msg = self._fake_reply_message(interaction.user, ticket_channel)
+                await thread.reply(
+                    fake_msg,
+                    content=(
+                        "❌ **Transfer Request Declined**\n"
+                        "> **Unfortunately, this request wasn't approved.**\n"
+                        f"> **Products requested:** {product_names}\n"
+                        "> \n"
+                        "> If you'd like to know more, feel free to ask your support agent in this ticket."
+                    ),
                 )
 
             await interaction.followup.send("Declined.", ephemeral=True)
@@ -498,17 +525,20 @@ class ParcelWhitelist(commands.Cog):
             product_names = ", ".join(p["name"] for p in matched)
             note = f"\n\n(Note: couldn't match: {', '.join(missing)})" if missing else ""
 
-        await ctx.send(
-            ":hourglass: **Transfer Request Received**\n"
-            "> **You're all sorted on your end, it's on us now.**\n"
-            f"> **Products requested to transfer:** {product_names}\n"
-            "> \n"
-            "> Your support agent has sent this request through to management, so there's nothing more you "
-            "need to do we'll get it sorted as soon as we can, could be a few mins, could take a couple days "
-            "depending on how busy things are.\n"
-            "> \n"
-            "> No need to keep messaging the ticket to try speed it up, it won't help and can actually knock "
-            f"you down the queue.{note}"
+        await thread.reply(
+            ctx.message,
+            content=(
+                ":hourglass: **Transfer Request Received**\n"
+                "> **You're all sorted on your end, it's on us now.**\n"
+                f"> **Products requested to transfer:** {product_names}\n"
+                "> \n"
+                "> Your support agent has sent this request through to management, so there's nothing more you "
+                "need to do we'll get it sorted as soon as we can, could be a few mins, could take a couple days "
+                "depending on how busy things are.\n"
+                "> \n"
+                "> No need to keep messaging the ticket to try speed it up, it won't help and can actually knock "
+                f"you down the queue.{note}"
+            ),
         )
 
 
