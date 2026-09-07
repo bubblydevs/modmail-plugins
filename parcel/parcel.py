@@ -95,16 +95,22 @@ class ParcelWhitelist(commands.Cog):
 
         return body.get("details", {}).get("products")
 
+    @staticmethod
+    def _normalize_owned(owned: list) -> list[str]:
+        """Backwards-compat: a prior version of this plugin cached owned products
+        as {"productID": ..., "name": ...} dicts. Handle both formats."""
+        return [item["name"] if isinstance(item, dict) else item for item in owned]
+
     async def get_profile_data(self, roblox_id: str) -> dict | None:
         """Returns {"owned": [names], "from_cache": bool, "fetched_at": datetime}.
         Uses the cache when it's still within CACHE_TTL, otherwise pulls live."""
         cached = await self.db.find_one({"_id": roblox_id})
         if cached and datetime.utcnow() - cached["fetched_at"] < CACHE_TTL:
-            return {"owned": cached["owned"], "from_cache": True, "fetched_at": cached["fetched_at"]}
+            return {"owned": self._normalize_owned(cached["owned"]), "from_cache": True, "fetched_at": cached["fetched_at"]}
 
         hub_auth = await self.get_hub_auth()
         if not hub_auth:
-            return {"owned": cached["owned"], "from_cache": True, "fetched_at": cached["fetched_at"]} if cached else None
+            return {"owned": self._normalize_owned(cached["owned"]), "from_cache": True, "fetched_at": cached["fetched_at"]} if cached else None
 
         headers = {"hub-secret-key": hub_auth}
         url = PRODUCTS_URL.format(roblox_id)
@@ -112,13 +118,13 @@ class ParcelWhitelist(commands.Cog):
         try:
             async with self.session.get(url, headers=headers) as resp:
                 if resp.status != 200:
-                    return {"owned": cached["owned"], "from_cache": True, "fetched_at": cached["fetched_at"]} if cached else None
+                    return {"owned": self._normalize_owned(cached["owned"]), "from_cache": True, "fetched_at": cached["fetched_at"]} if cached else None
                 body = await resp.json()
         except aiohttp.ClientError:
-            return {"owned": cached["owned"], "from_cache": True, "fetched_at": cached["fetched_at"]} if cached else None
+            return {"owned": self._normalize_owned(cached["owned"]), "from_cache": True, "fetched_at": cached["fetched_at"]} if cached else None
 
         if body.get("status") != "200":
-            return {"owned": cached["owned"], "from_cache": True, "fetched_at": cached["fetched_at"]} if cached else None
+            return {"owned": self._normalize_owned(cached["owned"]), "from_cache": True, "fetched_at": cached["fetched_at"]} if cached else None
 
         owned = [p["name"] for p in body["details"]["ownedProducts"]]
         fetched_at = datetime.utcnow()
@@ -191,11 +197,10 @@ class ParcelWhitelist(commands.Cog):
 
         if profile and profile["from_cache"]:
             ts = int(profile["fetched_at"].timestamp())
-            embed.set_footer(text="⚠️ Data may be stale — cached from below")
             embed.timestamp = profile["fetched_at"]
             embed.add_field(
                 name="⚠️ Cached Data",
-                value=f"This was pulled from cache <t:{ts}:R> (<t:{ts}:f>) — may not reflect recent changes.",
+                value=f"This was pulled from cache <t:{ts}:R> (<t:{ts}:f>) this data may not reflect recent changes.",
                 inline=False,
             )
 
