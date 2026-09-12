@@ -12,7 +12,6 @@ FIELD_CHAR_LIMIT = 1000
 MAX_FIELDS = 15
 
 
-
 class PayhipCheck(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -113,6 +112,7 @@ class PayhipCheck(commands.Cog):
         embed.add_field(name="Discord Username", value=profile.get("discordUsername") or "Unknown", inline=True)
         embed.add_field(name="Roblox Username", value=profile.get("robloxUsername") or "Unknown", inline=True)
         embed.add_field(name="Roblox ID", value=profile.get("robloxId") or "Unknown", inline=True)
+        embed.add_field(name="Email", value=profile.get("email") or "Unknown", inline=True)
 
         products = profile.get("products") or []
         if products:
@@ -129,6 +129,7 @@ class PayhipCheck(commands.Cog):
             "robloxId": "Roblox ID",
             "robloxUsername": "Roblox username",
             "discordUsername": "Discord username",
+            "email": "email",
         }
         method = profile.get("matchedBy", "unknown")
         embed.set_footer(text=f"{len(orders)} order(s) on file • matched via {matched_labels.get(method, method)}")
@@ -210,7 +211,7 @@ class PayhipCheck(commands.Cog):
                     embed = await self.build_order_embed(order_data["order"])
                 else:
                     profile = await self.payhip_lookup(
-                        robloxId=query, robloxUsername=query, discordUsername=query
+                        robloxId=query, robloxUsername=query, discordUsername=query, email=query
                     )
                     if not profile:
                         return await ctx.send(f"No order or profile found for `{query}`.")
