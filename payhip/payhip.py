@@ -65,7 +65,7 @@ class PayhipCheck(commands.Cog):
         except aiohttp.ClientError:
             return None
 
-    async def resolve_payhip_profile(self, member: discord.abc.User) -> tuple[dict | None, str]:
+    async def resolve_payhip_profile(self, member: discord.abc.User) -> dict | None:
         """Sends both the Roblox ID (if resolvable) and Discord username in one call —
         the API tries robloxId first, then discordUsername, server-side."""
         roblox_id = await self.discord_to_roblox(member.id)
@@ -74,11 +74,7 @@ class PayhipCheck(commands.Cog):
         if roblox_id:
             params["robloxId"] = roblox_id
 
-        profile = await self.payhip_lookup(**params)
-        if not profile:
-            return None, "none"
-
-        return profile, profile.get("matchedBy", "unknown")
+        return await self.payhip_lookup(**params)
 
     # ---------------------------------------------------------------- embeds
 
@@ -103,7 +99,10 @@ class PayhipCheck(commands.Cog):
         return lines
 
     async def build_profile_embed(self, member: discord.abc.User) -> discord.Embed:
-        profile, method = await self.resolve_payhip_profile(member)
+        profile = await self.resolve_payhip_profile(member)
+        return self._build_profile_embed_from_data(profile)
+
+    def _build_profile_embed_from_data(self, profile: dict | None) -> discord.Embed:
         embed = discord.Embed(title="Payhip Purchase History", color=discord.Color.blurple())
 
         if not profile:
@@ -130,6 +129,7 @@ class PayhipCheck(commands.Cog):
             "robloxUsername": "Roblox username",
             "discordUsername": "Discord username",
         }
+        method = profile.get("matchedBy", "unknown")
         embed.set_footer(text=f"{len(orders)} order(s) on file • matched via {matched_labels.get(method, method)}")
 
         return embed
@@ -193,6 +193,9 @@ class PayhipCheck(commands.Cog):
         """
         ?payhip            -> looks up the ticket-opener (Roblox ID first, then Discord username)
         ?payhip <orderId>  -> looks up one specific order by its Payhip order ID
+        ?payhip <query>    -> if not an order ID, tries it as a Roblox ID / Roblox username /
+                              Discord username instead (in that priority order). Email lookups
+                              are not supported by the API.
         """
         thread = await self.bot.threads.find(channel=ctx.channel)
         if not thread:
@@ -200,10 +203,17 @@ class PayhipCheck(commands.Cog):
 
         async with ctx.typing():
             if query:
-                data = await self.payhip_lookup(orderId=query.strip())
-                if not data:
-                    return await ctx.send(f"No order found for `{query}`.")
-                embed = await self.build_order_embed(data["order"])
+                query = query.strip()
+                order_data = await self.payhip_lookup(orderId=query)
+                if order_data:
+                    embed = await self.build_order_embed(order_data["order"])
+                else:
+                    profile = await self.payhip_lookup(
+                        robloxId=query, robloxUsername=query, discordUsername=query
+                    )
+                    if not profile:
+                        return await ctx.send(f"No order or profile found for `{query}`.")
+                    embed = self._build_profile_embed_from_data(profile)
             else:
                 embed = await self.build_profile_embed(thread.recipient)
 
