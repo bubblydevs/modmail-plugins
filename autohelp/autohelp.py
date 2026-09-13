@@ -190,11 +190,6 @@ class AutoHelp(commands.Cog):
             await ctx.invoke(reply_command, msg=text)
         except Exception:
             logger.exception(f"[AutoHelp] Failed to send automated customer reply in thread {thread.channel.id}")
-        finally:
-            try:
-                await placeholder.delete()
-            except discord.HTTPException:
-                pass
 
     @commands.command(name="autohelp")
     @checks.has_permissions(PermissionLevel.SUPPORTER)
