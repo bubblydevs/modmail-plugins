@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from logging import getLogger
 
 import aiohttp
 import discord
@@ -11,7 +11,7 @@ from discord.ext import commands
 from core import checks
 from core.models import PermissionLevel
 
-logger = logging.getLogger("Modmail")
+logger = getLogger(__name__)
 
 SEARCH_API_URL = "https://api.shopjava.uk/help/search"
 REQUEST_TIMEOUT_SECONDS = 5
@@ -80,7 +80,7 @@ class AutoHelp(commands.Cog):
         category,
         initial_message: discord.Message,
     ):
-        logger.debug(f"[AutoHelp] on_thread_ready fired for channel {thread.channel.id}, enabled={self.enabled}")
+        logger.info(f"[AutoHelp] on_thread_ready fired for channel {thread.channel.id}, enabled={self.enabled}")
         if not self.enabled:
             return
 
@@ -88,7 +88,7 @@ class AutoHelp(commands.Cog):
         self.pending[channel_id] = []
         if initial_message and initial_message.content:
             self.pending[channel_id].append(initial_message.content)
-            logger.debug(f"[AutoHelp] Captured initial message for channel {channel_id}: {initial_message.content[:80]!r}")
+            logger.info(f"[AutoHelp] Captured initial message for channel {channel_id}: {initial_message.content[:80]!r}")
         self._reset_timer(channel_id, thread)
 
     @commands.Cog.listener()
@@ -100,7 +100,7 @@ class AutoHelp(commands.Cog):
         anonymous: bool,
         plain: bool,
     ):
-        logger.debug(f"[AutoHelp] on_thread_reply fired — channel={thread.channel.id}, from_mod={from_mod}, enabled={self.enabled}")
+        logger.info(f"[AutoHelp] on_thread_reply fired — channel={thread.channel.id}, from_mod={from_mod}, enabled={self.enabled}")
         if not self.enabled:
             return
 
@@ -150,7 +150,7 @@ class AutoHelp(commands.Cog):
         result = await self._search_help_centre(query)
 
         if result is None:
-            logger.debug("[AutoHelp] No confident match returned from search API")
+            logger.info("[AutoHelp] No confident match returned from search API")
             return
 
         logger.info(f"[AutoHelp] Match found: {result.get('title')!r} (score={result.get('score')})")
