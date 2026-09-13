@@ -147,10 +147,20 @@ class AutoHelp(commands.Cog):
         logger.info(f"[AutoHelp] Match found: {result.get('title')!r} (score={result.get('score')})")
 
         text = (
-            f"While you wait, this might help: **{result['title']}**\n"
+            "# :wave: A Staff Member Is On The Way\n"
+            "**Thanks for reaching out we'll be with you shortly.**\n"
+            "> Our team operates in the **BST/GMT** timezone, so please bear this in mind if you're "
+            "messaging us outside of UK working hours replies may take a little longer to arrive.\n"
+            ">\n"
+            "> While you wait, we took a look through our help centre and found something that might "
+            "already answer your question:\n"
+            "\n"
+            f"**{result['title']}**\n"
             f"{result.get('description', '')}\n"
-            f"<https://help.shopjava.uk/docs/{result['slug']}>\n\n"
-            f"A member of the team will get back to you shortly!"
+            f"<https://help.shopjava.uk/docs/{result['slug']}>\n"
+            "\n"
+            "> If this doesn't solve it, no worries at all a member of staff will still get to your "
+            "ticket as soon as they can."
         )
         await self._send_customer_reply(thread, text)
 
