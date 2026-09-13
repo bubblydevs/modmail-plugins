@@ -16,6 +16,7 @@ logger = getLogger(__name__)
 SEARCH_API_URL = "https://api.shopjava.uk/help/search"
 REQUEST_TIMEOUT_SECONDS = 5
 QUIET_PERIOD_SECONDS = 10  # how long the customer must go silent before firing
+IGNORED_REPLY_AUTHOR_ID = 1345872797754200064  # e.g. an auto-responder/bot — never treat as a staff reply
 
 
 class AutoHelp(commands.Cog):
@@ -50,25 +51,20 @@ class AutoHelp(commands.Cog):
         existing = self.timers.get(channel_id)
         if existing and not existing.done():
             existing.cancel()
-            logger.debug(f"[AutoHelp] Cancelled existing timer for channel {channel_id}")
         self.timers[channel_id] = self.bot.loop.create_task(
             self._fire_after_quiet(channel_id, thread)
         )
-        logger.debug(f"[AutoHelp] Started {QUIET_PERIOD_SECONDS}s timer for channel {channel_id}")
 
     async def _fire_after_quiet(self, channel_id: int, thread):
         try:
             await asyncio.sleep(QUIET_PERIOD_SECONDS)
         except asyncio.CancelledError:
-            logger.debug(f"[AutoHelp] Timer cancelled for channel {channel_id} (new message or staff reply)")
             return
 
         if channel_id in self.suggested:
-            logger.debug(f"[AutoHelp] Channel {channel_id} already suggested, skipping")
             return
 
         messages = self.pending.get(channel_id, [])
-        logger.debug(f"[AutoHelp] Quiet period elapsed for channel {channel_id}, {len(messages)} messages collected")
         self.suggested.add(channel_id)
         await self._suggest_article(thread, messages)
 
@@ -80,7 +76,6 @@ class AutoHelp(commands.Cog):
         category,
         initial_message: discord.Message,
     ):
-        logger.info(f"[AutoHelp] on_thread_ready fired for channel {thread.channel.id}, enabled={self.enabled}")
         if not self.enabled:
             return
 
@@ -88,7 +83,6 @@ class AutoHelp(commands.Cog):
         self.pending[channel_id] = []
         if initial_message and initial_message.content:
             self.pending[channel_id].append(initial_message.content)
-            logger.info(f"[AutoHelp] Captured initial message for channel {channel_id}: {initial_message.content[:80]!r}")
         self._reset_timer(channel_id, thread)
 
     @commands.Cog.listener()
@@ -100,14 +94,17 @@ class AutoHelp(commands.Cog):
         anonymous: bool,
         plain: bool,
     ):
-        logger.info(f"[AutoHelp] on_thread_reply fired — channel={thread.channel.id}, from_mod={from_mod}, enabled={self.enabled}")
         if not self.enabled:
             return
 
         channel_id = thread.channel.id
 
+        # Never treat this specific author's replies as a staff reply —
+        # they shouldn't cancel the timer or block the suggestion.
+        if from_mod and message.author.id == IGNORED_REPLY_AUTHOR_ID:
+            from_mod = False
+
         if from_mod:
-            logger.debug(f"[AutoHelp] Staff replied first in channel {channel_id}, cancelling any pending suggestion")
             self.suggested.add(channel_id)
             existing = self.timers.get(channel_id)
             if existing and not existing.done():
@@ -115,12 +112,10 @@ class AutoHelp(commands.Cog):
             return
 
         if channel_id in self.suggested:
-            logger.debug(f"[AutoHelp] Channel {channel_id} already suggested, ignoring further messages")
             return
 
         if message.content:
             self.pending.setdefault(channel_id, []).append(message.content)
-            logger.debug(f"[AutoHelp] Appended message for channel {channel_id}: {message.content[:80]!r}")
         self._reset_timer(channel_id, thread)
 
     @commands.Cog.listener()
@@ -131,11 +126,9 @@ class AutoHelp(commands.Cog):
             existing.cancel()
         self.pending.pop(channel_id, None)
         self.suggested.discard(channel_id)
-        logger.debug(f"[AutoHelp] Cleaned up state for closed thread {channel_id}")
 
     async def _suggest_article(self, thread, messages: list[str]):
         if not messages:
-            logger.debug("[AutoHelp] No messages collected, skipping search")
             return
         if not self.session:
             logger.warning("[AutoHelp] No aiohttp session available — cog_load may not have run")
@@ -143,10 +136,8 @@ class AutoHelp(commands.Cog):
 
         query = "\n\n".join(m.strip() for m in messages if m.strip())
         if not query:
-            logger.debug("[AutoHelp] Joined query was empty after stripping, skipping search")
             return
 
-        logger.debug(f"[AutoHelp] Querying search API with: {query[:200]!r}")
         result = await self._search_help_centre(query)
 
         if result is None:
@@ -167,19 +158,16 @@ class AutoHelp(commands.Cog):
         if self.session is None:
             return None
         try:
-            logger.debug(f"[AutoHelp] GET {SEARCH_API_URL} with q={query[:50]!r}")
             async with self.session.get(
                 SEARCH_API_URL,
                 params={"q": query, "limit": 1},
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS),
             ) as resp:
-                logger.debug(f"[AutoHelp] Search API responded with status {resp.status}")
                 if resp.status != 200:
                     body = await resp.text()
                     logger.warning(f"[AutoHelp] Search API returned {resp.status}: {body[:300]}")
                     return None
                 data = await resp.json()
-                logger.debug(f"[AutoHelp] Search API response body: {data}")
                 results = data.get("results") or []
                 return results[0] if results else None
         except asyncio.TimeoutError:
@@ -195,12 +183,10 @@ class AutoHelp(commands.Cog):
             logger.error("[AutoHelp] Could not find the 'reply' command — is Modmail loaded correctly?")
             return
 
-        logger.debug(f"[AutoHelp] Sending customer reply via ctx.invoke: {text[:100]!r}")
         placeholder = await thread.channel.send("\u200b")
         try:
             ctx = await self.bot.get_context(placeholder)
             await ctx.invoke(reply_command, msg=text)
-            logger.info(f"[AutoHelp] Successfully sent reply to channel {thread.channel.id}")
         except Exception:
             logger.exception(f"[AutoHelp] Failed to send automated customer reply in thread {thread.channel.id}")
         finally:
