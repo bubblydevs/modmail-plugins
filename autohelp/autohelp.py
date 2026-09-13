@@ -186,6 +186,7 @@ class AutoHelp(commands.Cog):
         placeholder = await thread.channel.send("\u200b")
         try:
             ctx = await self.bot.get_context(placeholder)
+            ctx.thread = thread  # ctx.invoke() skips the check that normally sets this
             await ctx.invoke(reply_command, msg=text)
         except Exception:
             logger.exception(f"[AutoHelp] Failed to send automated customer reply in thread {thread.channel.id}")
