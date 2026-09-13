@@ -1,4 +1,4 @@
-# autohelp/autohelp.py
+g# autohelp/autohelp.py
 from __future__ import annotations
 
 import asyncio
@@ -160,8 +160,7 @@ class AutoHelp(commands.Cog):
             f"### :page_facing_up: [Read the full guide here]"
             f"(https://help.shopjava.uk/docs/{result['slug']})\n"
             "\n"
-            "> If this doesn't solve it, no worries at all a member of staff will still get to your "
-            "ticket as soon as they can."
+            "> If this hasn't solved your issue, a member of our team will get back to you shortly."
         )
         await self._send_customer_reply(thread, text)
 
