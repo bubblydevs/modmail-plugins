@@ -1,4 +1,4 @@
-g# autohelp/autohelp.py
+# autohelp/autohelp.py
 from __future__ import annotations
 
 import asyncio
