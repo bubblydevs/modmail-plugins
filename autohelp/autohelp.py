@@ -97,8 +97,6 @@ class AutoHelp(commands.Cog):
         channel_id = thread.channel.id
 
         if from_mod:
-            # Staff replied first — cancel any pending suggestion so it
-            # never fires after a human has already taken over.
             self.suggested.add(channel_id)
             existing = self.timers.get(channel_id)
             if existing and not existing.done():
@@ -131,7 +129,7 @@ class AutoHelp(commands.Cog):
 
         result = await self._search_help_centre(query)
         if result is None:
-            return 
+            return
 
         text = (
             f"While you wait, this might help: **{result['title']}**\n"
@@ -161,12 +159,6 @@ class AutoHelp(commands.Cog):
             return None
 
     async def _send_customer_reply(self, thread, text: str):
-        """
-        Relays `text` to the customer through Modmail's real reply
-        pipeline. A plain channel.send() would only post an internal
-        note — this builds a throwaway message purely to get a valid
-        Context, then invokes the real `reply` command directly.
-        """
         reply_command = self.bot.get_command("reply")
         if reply_command is None:
             logger.error("Could not find the 'reply' command — is Modmail loaded correctly?")
@@ -199,3 +191,13 @@ class AutoHelp(commands.Cog):
         state = state.lower()
         if state in ("enable", "on", "true"):
             self.enabled = True
+            await ctx.send("✅ AutoHelp is now **enabled**.")
+        elif state in ("disable", "off", "false"):
+            self.enabled = False
+            await ctx.send("🚫 AutoHelp is now **disabled**.")
+        else:
+            await ctx.send("Usage: `?autohelp enable` or `?autohelp disable`")
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(AutoHelp(bot))
