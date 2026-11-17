@@ -371,13 +371,15 @@ class DriverForms(commands.Cog):
             return await self.fail(interaction, res)
         staff, status, days = res["staff"], res["status"], res["days"]
         pending = status == "Pending"
+        why = ("they've already had an LOA in the last month" if res.get("recent") and days <= 14
+               else "over 2 weeks")
 
         emb = self.base_embed("LOA Request", interaction.user, staff, colour=AMBER if pending else GREEN)
         emb.add_field(name="From", value=nice_date(s), inline=True)
         emb.add_field(name="To", value=nice_date(e), inline=True)
         emb.add_field(name="Days", value=str(days), inline=True)
         emb.add_field(name="Reason", value=form.reason.value, inline=False)
-        emb.add_field(name="Status", value="Pending (over 2 weeks, needs Command to approve)" if pending
+        emb.add_field(name="Status", value=f"Pending ({why}, needs Command to approve)" if pending
                       else "Approved", inline=False)
         emb.add_field(name="Request ID", value=f"`{req_id}`", inline=False)
 
@@ -392,7 +394,8 @@ class DriverForms(commands.Cog):
             content = r.mention if r else None
         await self.post("loa", emb, "loa", content=content, view=view,
                         thread_name=f"LOA - [{staff['pin']}] {staff['name']} - {nice_date(s)}")
-        msg = (f"Your LOA ({nice_date(s)} to {nice_date(e)}, {days} days) is over 2 weeks, so it's gone to Command to approve. "
+        reason = "is over 2 weeks" if why == "over 2 weeks" else "comes within a month of your last one"
+        msg = (f"Your LOA ({nice_date(s)} to {nice_date(e)}, {days} days) {reason}, so it's gone to Command to approve. "
                "You'll get a DM once it's been looked at." if pending
                else f"Your LOA ({nice_date(s)} to {nice_date(e)}, {days} days) has been approved. Enjoy the break!")
         await interaction.followup.send(msg, ephemeral=True)
