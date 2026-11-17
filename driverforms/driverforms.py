@@ -41,7 +41,7 @@ BANNERS = {
     "loa": "banner-loa-request.png",
 }
 PIN_RE = re.compile(r"\[(\d{4})\]")
-FOOTER = "Stagecoach East Midlands • Driver Forms"
+FOOTER = "Stagecoach East Midlands"
 
 ERRORS = {
     "not_found": "I couldn't find you on the staff database. Make sure your pin is in your nickname, e.g. **[1234] Name**, or speak to Command.",
@@ -100,12 +100,12 @@ def nice_date(d):
 # ----------------------------------------------------------------- modals
 
 class ShiftModal(discord.ui.Modal, title="Shift Log"):
-    date = discord.ui.TextInput(label="Date", placeholder="DD/MM/YYYY - leave blank for today", required=False, max_length=10)
+    date = discord.ui.TextInput(label="Date", placeholder="DD/MM/YYYY, leave blank for today", required=False, max_length=10)
     start = discord.ui.TextInput(label="Shift start", placeholder="e.g. 18:30", max_length=8)
     end = discord.ui.TextInput(label="Shift end", placeholder="e.g. 20:15", max_length=8)
-    routes = discord.ui.TextInput(label="Routes", placeholder="e.g. 1, 9, 141", max_length=200)
+    routes = discord.ui.TextInput(label="Routes", placeholder="7, 21, 36, X30?", max_length=200)
     notes = discord.ui.TextInput(label="Notes", style=discord.TextStyle.paragraph, required=False, max_length=1000,
-                                 placeholder="Anything worth knowing (optional)")
+                                 placeholder="Anything we should know")
 
     def __init__(self, cog):
         super().__init__()
@@ -116,13 +116,13 @@ class ShiftModal(discord.ui.Modal, title="Shift Log"):
 
 
 class IncidentModal(discord.ui.Modal, title="Driver Incident Log"):
-    when = discord.ui.TextInput(label="Date and time", placeholder="e.g. 17/11/2026 19:40 - blank for now", required=False, max_length=20)
-    location = discord.ui.TextInput(label="Route / location", placeholder="e.g. Route 1, Mansfield bus station", max_length=200)
+    when = discord.ui.TextInput(label="Date and time", placeholder="e.g. 17/11/2026 19:40, leave blank for now", required=False, max_length=20)
+    location = discord.ui.TextInput(label="Route / location", placeholder="e.g. Clayton Road, Mansfield bus station", max_length=200)
     what = discord.ui.TextInput(label="What happened?", style=discord.TextStyle.paragraph, max_length=1000)
-    involved = discord.ui.TextInput(label="Anyone else involved?", placeholder="Passengers, other drivers, vehicles (optional)",
+    involved = discord.ui.TextInput(label="Anyone else involved?", placeholder="Passengers, other drivers, vehicles",
                                     required=False, max_length=300)
     action = discord.ui.TextInput(label="Action taken", style=discord.TextStyle.paragraph, max_length=1000,
-                                  placeholder="What did you do after it happened?")
+                                  placeholder="What did you do after?")
 
     def __init__(self, cog):
         super().__init__()
@@ -257,10 +257,9 @@ class DriverForms(commands.Cog):
         e = discord.Embed(title=title, colour=colour, timestamp=now())
         e.set_author(name=f"[{staff['pin']}] {staff['name']}", icon_url=member.display_avatar.url)
         e.add_field(name="Driver", value=member.mention, inline=True)
-        rank = (staff["rank"] or "-") + (" • **Trainee**" if staff["rank"] == "Trainee Driver" else "")
+        rank = staff["rank"] or "-"
         e.add_field(name="Rank", value=rank, inline=True)
         e.add_field(name="Roblox", value=staff["roblox"] or "-", inline=True)
-        e.set_image(url="attachment://banner.png")
         e.set_footer(text=FOOTER)
         return e
 
@@ -270,13 +269,12 @@ class DriverForms(commands.Cog):
             return None
         mentions = discord.AllowedMentions(roles=True, users=True, everyone=False)
         if isinstance(ch, discord.ForumChannel):
-            kwargs = dict(name=thread_name or embed.title, content=content, embed=embed, file=banner(kind),
-                          allowed_mentions=mentions)
+            kwargs = dict(name=thread_name or embed.title, content=content, embed=embed, allowed_mentions=mentions)
             if view is not None:
                 kwargs["view"] = view
             res = await ch.create_thread(**kwargs)
             return res.message
-        return await ch.send(content=content, embed=embed, file=banner(kind), view=view, allowed_mentions=mentions)
+        return await ch.send(content=content, embed=embed, view=view, allowed_mentions=mentions)
 
     # ---------- form handlers
 
@@ -291,8 +289,19 @@ class DriverForms(commands.Cog):
             return await interaction.response.send_message("I couldn't read your shift times. Use HH:MM, e.g. 18:30.", ephemeral=True)
         mins = (e[0] - s[0]) % 1440
         if mins == 0 or mins > 12 * 60:
-            return await interaction.response.send_message("Those times don't look right (0 or over 12 hours). Double check them.", ephemeral=True)
+            return await interaction.response.send_message("Those times don't look right. Double check them.", ephemeral=True)
         hours = round(mins / 60, 2)
+
+        start_dt = datetime(d.year, d.month, d.day, s[0] // 60, s[0] % 60, tzinfo=TZ)
+        if not (form.date.value or "").strip() and start_dt > now():
+            start_dt -= timedelta(days=1)  # blank date + start time later than now = shift started yesterday
+            d = start_dt.date()
+        if start_dt + timedelta(minutes=mins) > now() + timedelta(minutes=5):
+            return await interaction.response.send_message("You can't log a shift that hasn't finished yet.", ephemeral=True)
+        if now() - start_dt > timedelta(hours=24):
+            return await interaction.response.send_message(
+                "Shifts have to be logged within 24 hours of starting, so this one can't be logged. "
+                "Speak to Command if you think it should count.", ephemeral=True)
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         res = await self.call("shift", **self.who(interaction.user), date=d.isoformat(), start=s[1], end=e[1],
@@ -301,15 +310,15 @@ class DriverForms(commands.Cog):
             return await self.fail(interaction, res)
         staff = res["staff"]
 
-        emb = self.base_embed("🕒 Shift Log", interaction.user, staff)
+        emb = self.base_embed("Shift Log", interaction.user, staff)
         emb.add_field(name="Date", value=nice_date(d), inline=True)
-        emb.add_field(name="Shift", value=f"{s[1]} - {e[1]}", inline=True)
+        emb.add_field(name="Shift", value=f"{s[1]} to {e[1]}", inline=True)
         emb.add_field(name="Hours", value=f"{hours:g}", inline=True)
         emb.add_field(name="Routes", value=form.routes.value, inline=False)
         if form.notes.value.strip():
             emb.add_field(name="Notes", value=form.notes.value, inline=False)
         await self.post("shift", emb, "shift")
-        await interaction.followup.send(f"✅ Shift logged: **{nice_date(d)}**, {s[1]} - {e[1]} ({hours:g}h). Cheers!", ephemeral=True)
+        await interaction.followup.send(f"Shift logged for {nice_date(d)}, {s[1]} to {e[1]} ({hours:g}h). Cheers!", ephemeral=True)
 
     async def handle_incident(self, interaction, form):
         raw = (form.when.value or "").strip()
@@ -332,20 +341,20 @@ class DriverForms(commands.Cog):
             return await self.fail(interaction, res)
         staff = res["staff"]
 
-        emb = self.base_embed("⚠️ Driver Incident Log", interaction.user, staff, colour=AMBER)
+        emb = self.base_embed("Driver Incident Log", interaction.user, staff, colour=AMBER)
         emb.add_field(name="When", value=when, inline=True)
         emb.add_field(name="Route / location", value=form.location.value, inline=True)
         emb.add_field(name="​", value="​", inline=True)
         emb.add_field(name="What happened", value=form.what.value, inline=False)
         emb.add_field(name="Others involved", value=form.involved.value or "None given", inline=False)
         emb.add_field(name="Action taken", value=form.action.value, inline=False)
-        emb.add_field(name="Status", value="🟠 **Needs reviewing** - added to Driving Standards", inline=False)
+        emb.add_field(name="Status", value="Needs reviewing", inline=False)
 
         pings = [r.mention for r in (self.role(interaction.guild, "incident"),
                                      self.role(interaction.guild, "trainer") if staff["rank"] == "Trainee Driver" else None) if r]
         await self.post("incident", emb, "incident", content=" ".join(pings) or None,
                         thread_name=f"Incident - [{staff['pin']}] {staff['name']} - {nice_date(d)}")
-        await interaction.followup.send("✅ Incident logged and sent to the supervisors. Thanks for reporting it.", ephemeral=True)
+        await interaction.followup.send("Thanks, your incident has been sent to the supervisors.", ephemeral=True)
 
     async def handle_loa(self, interaction, form):
         s, e = parse_date(form.start.value), parse_date(form.end.value)
@@ -363,13 +372,13 @@ class DriverForms(commands.Cog):
         staff, status, days = res["staff"], res["status"], res["days"]
         pending = status == "Pending"
 
-        emb = self.base_embed("📅 LOA Request", interaction.user, staff, colour=AMBER if pending else GREEN)
+        emb = self.base_embed("LOA Request", interaction.user, staff, colour=AMBER if pending else GREEN)
         emb.add_field(name="From", value=nice_date(s), inline=True)
         emb.add_field(name="To", value=nice_date(e), inline=True)
         emb.add_field(name="Days", value=str(days), inline=True)
         emb.add_field(name="Reason", value=form.reason.value, inline=False)
-        emb.add_field(name="Status", value="🟠 **Pending** - over 2 weeks, needs Command approval" if pending
-                      else "🟢 **Approved (Auto)** - 2 weeks or under", inline=False)
+        emb.add_field(name="Status", value="Pending (over 2 weeks, needs Command to approve)" if pending
+                      else "Approved", inline=False)
         emb.add_field(name="Request ID", value=f"`{req_id}`", inline=False)
 
         view, content = None, None
@@ -383,9 +392,9 @@ class DriverForms(commands.Cog):
             content = r.mention if r else None
         await self.post("loa", emb, "loa", content=content, view=view,
                         thread_name=f"LOA - [{staff['pin']}] {staff['name']} - {nice_date(s)}")
-        msg = (f"📅 Your LOA ({nice_date(s)} - {nice_date(e)}, {days} days) is over 2 weeks so it's been sent to Command for approval. "
-               "You'll get a DM when it's been looked at." if pending
-               else f"✅ Your LOA ({nice_date(s)} - {nice_date(e)}, {days} days) has been approved automatically. Enjoy the break!")
+        msg = (f"Your LOA ({nice_date(s)} to {nice_date(e)}, {days} days) is over 2 weeks, so it's gone to Command to approve. "
+               "You'll get a DM once it's been looked at." if pending
+               else f"Your LOA ({nice_date(s)} to {nice_date(e)}, {days} days) has been approved. Enjoy the break!")
         await interaction.followup.send(msg, ephemeral=True)
 
     # ---------- LOA approve / deny buttons
@@ -415,8 +424,7 @@ class DriverForms(commands.Cog):
         emb = interaction.message.embeds[0]
         for i, f in enumerate(emb.fields):
             if f.name == "Status":
-                icon = "🟢" if status == "Approved" else "🔴"
-                emb.set_field_at(i, name="Status", value=f"{icon} **{status}** by {member.mention}", inline=False)
+                emb.set_field_at(i, name="Status", value=f"{status} by {member.mention}", inline=False)
         emb.colour = GREEN if status == "Approved" else RED
         await interaction.message.edit(embed=emb, view=None)
 
@@ -473,14 +481,13 @@ class DriverForms(commands.Cog):
         """Post the Driver Forms panel."""
         channel = channel or ctx.channel
         emb = discord.Embed(
-            title="Driver Forms",
             colour=NAVY,
             description=(
-                "Pick a form from the menu below. Everything you submit goes straight onto the staff database.\n\n"
-                "🕒 **Shift Log**\nLog every shift once you've finished. You need **2 a week** to stay active.\n\n"
-                "⚠️ **Driver Incident Log**\nReport anything that happened on the road, especially if no supervisor was on.\n\n"
-                "📅 **LOA Request**\nGoing away? Up to 2 weeks is approved automatically. Longer needs Command approval.\n\n"
-                "Make sure your pin is in your nickname, e.g. **[1234] Name**."
+                "**Shift Log**\nLog your shift once you've finished. You need 2 a week to stay active, "
+                "and shifts have to be logged within 24 hours.\n\n"
+                "**Driver Incident Log**\nReport anything that happened while you were driving, especially if there was no supervisor on.\n\n"
+                "**LOA Request**\nGoing away? Up to 2 weeks is approved straight away. Anything longer needs Command to approve it.\n\n"
+                "Make sure your pin is in your nickname, e.g. [1234] Name."
             ),
         )
         emb.set_image(url="attachment://banner.png")
